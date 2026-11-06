@@ -8,7 +8,6 @@ from polygon.websocket.models import Feed, Market, WebSocketMessage
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 
-
 load_dotenv()
 
 api_key = os.environ["POLYGON_API_KEY"]
