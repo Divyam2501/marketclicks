@@ -1,12 +1,13 @@
 import os
 import warnings
 
-warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
-
 from dotenv import load_dotenv
 from polygon import WebSocketClient
-from polygon.websocket.models import WebSocketMessage, Feed, Market
-from typing import List
+from polygon.websocket.models import Feed, Market, WebSocketMessage
+
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
+
+
 
 load_dotenv()
 
@@ -22,7 +23,7 @@ client.subscribe("T.AAPL")  # stocks trades
 # client.subscribe("T.TSLA", "T.UBER") # multiple tickers
 
 
-def handle_msg(msgs: List[WebSocketMessage]):
+def handle_msg(msgs: list[WebSocketMessage]):
     for m in msgs:
         print(m)
 
