@@ -1,7 +1,21 @@
+# Secrets
 .env
 .env.*
+!.env.example
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
 .DS_Store
+.vscode/
