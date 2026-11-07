@@ -11,7 +11,7 @@ Historical plans for reference only: `project-bible.md`, `learning-plan.md`
 
 - **What:** Real-time market data streaming + anomaly detection platform
 - **Timeline:** Nov 5 – Dec 30, 2026 (8 weeks)
-- **Current day:** Day 2, Week 1 (Fri Nov 6, 2026 — plan labels this Thu but calendar is Fri; doesn't affect task sequence)
+- **Current day:** Day 2, Week 1 (**Fri Nov 6, 2026**). Plan's weekday labels are off by one (plan says "Thu Nov 6"); dates are authoritative, weekday labels in plan are ignored.
 - **Target end state:** Shipped Kafka + PyFlink pipeline on GKE, 5 anomaly detectors live, blog + video, 25-30 applications in flight by Jan 1
 - **Repo:** `https://github.com/Divyam2501/marketclicks` (named marketclicks, contents are tickstore)
 
@@ -74,13 +74,15 @@ Historical plans for reference only: `project-bible.md`, `learning-plan.md`
 
 ### Week 1 (Nov 5-11) — Foundation & Ingestion Scaffold
 
-- [x] Day 1 (Nov 5) — Setup (Polygon, Confluent, GCP, repo scaffold, CI, first commit)
-- [x] Day 2 (Nov 6) — Python asyncio WebSocket client, 10 symbols, stdout only (code done, live-test pending next market open)
-- [ ] Day 3 (Nov 7) — Reconnect logic with exponential backoff
-- [ ] Sat Nov 8 — Kafka producer to Confluent topic `trades.raw`, partitioned by symbol
-- [ ] Sun Nov 9 — GKE via Terraform, deploy ingestion pod
-- [ ] Mon Nov 10 — Prometheus metrics + Grafana Cloud
-- [ ] Tue Nov 11 — Add quotes `Q` subscription, topic `quotes.raw`, `notes/understanding-week1.md`
+Correct weekday mapping: Nov 5 = Thu, Nov 6 = Fri, Nov 7 = Sat, Nov 8 = Sun, Nov 9 = Mon, Nov 10 = Tue, Nov 11 = Wed.
+
+- [x] Day 1 — **Thu Nov 5** — Setup (Polygon, Confluent, GCP, repo scaffold, CI, first commit)
+- [x] Day 2 — **Fri Nov 6** — Python asyncio WebSocket client, 10 symbols, stdout only (code done, live-test pending next market open)
+- [ ] Day 3 — **Sat Nov 7** — Reconnect logic with exponential backoff + resubscribe + distinguish auth failures from network drops
+- [ ] Day 4 — **Sun Nov 8** — Kafka producer to Confluent `trades.raw`, partitioned by symbol, measure end-to-end throughput
+- [ ] Day 5 — **Mon Nov 9** — GKE via Terraform (single-node preemptible), deploy ingestion pod, verify Kafka from pod
+- [ ] Day 6 — **Tue Nov 10** — Structured logging + Prometheus metrics (messages_ingested_total, reconnect_count, bytes_processed_total) + Grafana Cloud free tier
+- [ ] Day 7 — **Wed Nov 11** — Add quotes `Q` subscription + topic `quotes.raw`, write `notes/understanding-week1.md`
 
 ---
 
