@@ -12,10 +12,10 @@
 ## Decisions made tonight
 
 ### Why Confluent Cloud over Redpanda
-(Fill in your reasoning — what you weighed and why Confluent won)
+Confluent has more resources across the internet and more support
 
 ### Why uv over poetry
-(Fill in — speed? modern defaults? CI time?)
+UV is faster and the latest tool in terms of CI, saves time over the development cycle.
 
 ### Why Python 3.11
 (What the plan called for and why)
