@@ -1,12 +1,15 @@
 """Polygon.io WebSocket client with auto-reconnect + Kafka producer.
 
-Streams trades for 10 US equity symbols to Confluent topic `trades.raw`,
-partitioned by symbol. WebSocket reader and Kafka producer run as separate
-coroutines sharing a bounded asyncio.Queue; reader blocks on queue-full for
-natural backpressure to Polygon.
+Streams second-level OHLCV aggregate bars (AS.*) for 10 US equity symbols to
+Confluent topic `trades.raw` (name retained from initial design; carries bar
+data). Partitioned by symbol. WebSocket reader and Kafka producer run as
+separate coroutines sharing a bounded asyncio.Queue; reader blocks on
+queue-full for natural backpressure to Polygon.
 
 Day 4 scope: ingest + reconnect + idempotent produce to Kafka.
-Not yet included: schema registry (Week 2+), metrics (Day 6), quotes (Day 7).
+Day 5 (Nov 9) pivot: switched from T.* (trades) to AS.* (second aggregates)
+after discovering Polygon Stocks Starter plan doesn't include trade WebSocket.
+Not yet included: schema registry (Week 2+), metrics (Day 6), quotes (Day 7+).
 
 Run: python -m tickstore.ingest.polygon_feed
 """
@@ -77,16 +80,19 @@ def make_producer() -> Producer:
     return producer
 
 
-def serialize_trade(msg: WebSocketMessage) -> bytes:
-    """JSON-encode a Polygon trade message. Uses getattr for defensive access."""
+def serialize_bar(msg: WebSocketMessage) -> bytes:
+    """JSON-encode a Polygon second-aggregate bar. Uses getattr for defensive access."""
     payload = {
         "event_type": getattr(msg, "event_type", None),
         "symbol": getattr(msg, "symbol", None),
-        "price": getattr(msg, "price", None),
-        "size": getattr(msg, "size", None),
-        "timestamp": getattr(msg, "timestamp", None),
-        "exchange": getattr(msg, "exchange", None),
-        "conditions": getattr(msg, "conditions", None),
+        "open": getattr(msg, "open", None),
+        "high": getattr(msg, "high", None),
+        "low": getattr(msg, "low", None),
+        "close": getattr(msg, "close", None),
+        "volume": getattr(msg, "volume", None),
+        "vwap": getattr(msg, "vwap", None),
+        "start_timestamp": getattr(msg, "start_timestamp", None),
+        "end_timestamp": getattr(msg, "end_timestamp", None),
     }
     return json.dumps(payload).encode("utf-8")
 
@@ -116,7 +122,7 @@ async def producer_task(queue: asyncio.Queue, producer: Producer) -> None:
             producer.produce(
                 topic=KAFKA_TOPIC,
                 key=msg.symbol.encode("utf-8"),
-                value=serialize_trade(msg),
+                value=serialize_bar(msg),
                 on_delivery=delivery_callback,
             )
         except BufferError:
@@ -135,10 +141,10 @@ async def run_with_reconnect(queue: asyncio.Queue) -> None:
     async def handle_messages(messages: list[WebSocketMessage]) -> None:
         for m in messages:
             event = getattr(m, "event_type", None)
-            if event == "T":
+            if event == "AS":
                 await queue.put(m)
             else:
-                logger.info("non-trade message: %s", m)
+                logger.info("non-bar message: %s", m)
 
     backoff = BASE_BACKOFF_SEC
     while True:
@@ -148,11 +154,11 @@ async def run_with_reconnect(queue: asyncio.Queue) -> None:
                 feed=Feed.Delayed,
                 market=Market.Stocks,
             )
-            channels = [f"T.{sym}" for sym in SYMBOLS]
+            channels = [f"AS.{sym}" for sym in SYMBOLS]
             client.subscribe(*channels)
 
             logger.info(
-                "connecting to polygon; subscribed to %d trade channels: %s",
+                "connecting to polygon; subscribed to %d second-bar channels: %s",
                 len(channels),
                 ", ".join(SYMBOLS),
             )
