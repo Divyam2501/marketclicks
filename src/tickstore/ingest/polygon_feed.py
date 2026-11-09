@@ -153,6 +153,8 @@ async def run_with_reconnect(queue: asyncio.Queue) -> None:
                 api_key=api_key,
                 feed=Feed.Delayed,
                 market=Market.Stocks,
+                # disable library's internal reconnect; our outer loop handles backoff
+                max_reconnects=0,
             )
             channels = [f"AS.{sym}" for sym in SYMBOLS]
             client.subscribe(*channels)
