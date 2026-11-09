@@ -2,11 +2,12 @@
 name = "tickstore"
 version = "0.1.0"
 description = "Real-time market data streaming and anomaly detection platform"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 authors = [{ name = "Divyam Kaushik" }]
 license = { text = "MIT" }
 readme = "README.md"
 dependencies = [
+    "confluent-kafka>=2.16.1",
     "polygon-api-client>=1.16",
     "python-dotenv>=1.0",
     "websockets>=14",
