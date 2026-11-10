@@ -1,14 +1,15 @@
 """Polygon.io WebSocket client with auto-reconnect + Kafka producer.
 
-Streams second-level OHLCV aggregate bars (AS.*) for 10 US equity symbols to
+Streams second-level OHLCV aggregate bars (A.*) for 10 US equity symbols to
 Confluent topic `trades.raw` (name retained from initial design; carries bar
 data). Partitioned by symbol. WebSocket reader and Kafka producer run as
 separate coroutines sharing a bounded asyncio.Queue; reader blocks on
 queue-full for natural backpressure to Polygon.
 
 Day 4 scope: ingest + reconnect + idempotent produce to Kafka.
-Day 5 (Nov 9) pivot: switched from T.* (trades) to AS.* (second aggregates)
-after discovering Polygon Stocks Starter plan doesn't include trade WebSocket.
+Day 5 (Nov 9) pivot: switched from T.* (trades) to A.* (equity second
+aggregates, EventType.EquityAgg) after discovering Polygon Stocks Starter
+plan doesn't include trade WebSocket.
 Not yet included: schema registry (Week 2+), metrics (Day 6), quotes (Day 7+).
 
 Run: python -m tickstore.ingest.polygon_feed
@@ -141,7 +142,7 @@ async def run_with_reconnect(queue: asyncio.Queue) -> None:
     async def handle_messages(messages: list[WebSocketMessage]) -> None:
         for m in messages:
             event = getattr(m, "event_type", None)
-            if event == "AS":
+            if event == "A":
                 await queue.put(m)
             else:
                 logger.info("non-bar message: %s", m)
@@ -156,7 +157,7 @@ async def run_with_reconnect(queue: asyncio.Queue) -> None:
                 # disable library's internal reconnect; our outer loop handles backoff
                 max_reconnects=0,
             )
-            channels = [f"AS.{sym}" for sym in SYMBOLS]
+            channels = [f"A.{sym}" for sym in SYMBOLS]
             client.subscribe(*channels)
 
             logger.info(
