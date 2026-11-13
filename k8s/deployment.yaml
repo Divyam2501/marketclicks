@@ -1,0 +1,50 @@
+# alpaca_feed on GKE. Design: docs/deploy-design.md §4.4.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpaca-feed
+  labels:
+    app: alpaca-feed
+spec:
+  # Alpaca allows one stream connection per account: never more than one pod.
+  replicas: 1
+  # Recreate stops the old pod before starting the new one. RollingUpdate would
+  # overlap them and the new pod's connection would be rejected (406).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: alpaca-feed
+  template:
+    metadata:
+      labels:
+        app: alpaca-feed
+    spec:
+      # SIGTERM -> SIGKILL window for deploys and deletes. Covers the app's 13s
+      # shutdown budget with margin. (Spot preemption has its own fixed window.)
+      terminationGracePeriodSeconds: 20
+      # Numeric IDs so Kubernetes can verify non-root (a user *name* like "app"
+      # can't be checked). Must match the Dockerfile's USER.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+      containers:
+        - name: alpaca-feed
+          # Tag = git commit of the code inside. Update per deploy; never :latest.
+          image: us-east1-docker.pkg.dev/market-data-stream/tickstore/alpaca-feed:1fea306
+          envFrom:
+            - secretRef:
+                name: alpaca-feed-env
+          resources:
+            # e2-small leaves ~300 MiB after GKE system pods; request fits inside it.
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

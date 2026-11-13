@@ -25,3 +25,9 @@ notes/
 project-bible.md
 learning-plan.md
 Tickstore Learning & Build Plan (Nov 5 to Dec 31, 2026).md
+
+# Terraform
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+terraform/tfplan
