@@ -74,6 +74,8 @@ Each decision has a **What** (committed) and a **Why** (to be written in own voi
 
 **Why:** *(During the early iteration phase, a manual Docker workflow is preferred over a CI pipeline to maximize developer iteration speed and avoid the latency of forcing a GitHub push for every microscopic image test. Manual builds allow you to compile code changes locally, quickly bump version tags, and push directly to Google Artifact Registry for immediate GKE deployment without overhead. However, introducing CI/CD complexity becomes highly valuable once the image requires daily rebuilds or a second developer joins the team, shifting the system from experimental debugging to a stable, automated, and audited release path.)*
 
+*(For Docker, it is in two stages: docker build, which has uv, but uv is not required during run-time, as the docker builder builds the .venv with the uv-locked packages. uv's job ends at build time, and once that is done, the new PODs only pull the latest image. The build only needs to be done at the time of code changes. Image re-pull to a POD depends on HOW the POD crashed: if the POD crashed due to an intermittent issue, it restarts on the same node, where the image is already cached, so no pull is needed and it starts quicker. However, if it was a preemption, the node itself was replaced by a new VM that does not have the image, so it needs to pull from Artifact Registry, and a smaller image means a shorter feed gap.)*
+
 ---
 
 ### 4.4 Deployment vs single Pod

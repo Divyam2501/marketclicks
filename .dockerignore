@@ -1,0 +1,26 @@
+# Secrets: never in the build context, never in an image
+.env
+.env.*
+
+# Mac venv: built for macOS/ARM, useless on Linux/x86; the image builds its own
+.venv/
+
+# Local notes (not committed)
+notes/
+project-bible.md
+learning-plan.md
+Tickstore Learning & Build Plan (Nov 5 to Dec 31, 2026).md
+
+# Not needed to run the feed
+.git/
+.github/
+.vscode/
+docs/
+tests/
+terraform/
+k8s/
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
