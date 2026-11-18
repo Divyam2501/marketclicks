@@ -4,6 +4,8 @@
 **Status:** Day 3 design (Nov 7, 2026)
 **Author:** Divyam Kaushik
 
+> **Note (Nov 17):** written for the original Polygon feed. After the Nov 9 switch to Alpaca (Polygon's plan did not deliver WebSocket data), the same design lives in `src/tickstore/ingest/alpaca_feed.py`; `polygon_feed.py` was removed.
+
 ---
 
 ## 1. Purpose

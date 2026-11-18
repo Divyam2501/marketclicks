@@ -2,7 +2,7 @@
 
 Streams real-time trades for 10 US equity symbols from Alpaca's IEX feed
 to Confluent topic `trades.raw`, partitioned by symbol. Same architecture
-as the previous polygon_feed.py: split WebSocket reader + Kafka producer
+as the original Polygon client (removed; in git history): split WebSocket reader + Kafka producer
 coroutines sharing a bounded asyncio.Queue; reader blocks on queue-full
 for natural backpressure.
 

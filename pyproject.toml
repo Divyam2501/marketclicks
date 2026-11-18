@@ -8,7 +8,6 @@ license = { text = "MIT" }
 readme = "README.md"
 dependencies = [
     "confluent-kafka>=2.16.1",
-    "polygon-api-client>=1.16",
     "python-dotenv>=1.0",
     "websockets>=14",
 ]
@@ -40,10 +39,6 @@ python_version = "3.11"
 strict = false
 warn_return_any = true
 warn_unused_ignores = true
-
-[[tool.mypy.overrides]]
-module = ["polygon.*"]
-ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
