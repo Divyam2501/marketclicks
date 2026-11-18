@@ -72,9 +72,9 @@ flink/
 **What:** The DataStream API in Python. The watermark strategy, `key_by`, window, aggregation and late-data side output are all written explicitly. Flink SQL could express the count in a few lines, but it drops late rows silently, with no side output.
 
 ```
-KafkaSource(trades.raw)
+KafkaSource(trades.raw)                                    # parallelism 3: one partition per subtask
   → parse JSON → Trade(symbol, ts_ms, conditions)          # drop + count malformed
-  → watermarks: bounded out-of-orderness 2s, idleness 30s
+  → watermarks: bounded out-of-orderness 2s, idleness 30s   # after the source (§4.4)
   → key_by(symbol)
   → TumblingEventTimeWindows(1 min)
   → side_output_late_data(LATE)
@@ -93,9 +93,10 @@ KafkaSource(trades.raw)
 ### 4.4 Watermarks
 
 **What:** `WatermarkStrategy.for_bounded_out_of_orderness(2s).with_idleness(30s)` with a timestamp assigner reading the parsed `ts_ms`.
-- **Out-of-orderness 2s** is a starting value. The hello-world on Wed Nov 18 measures how out of order `trades.raw` really is (per partition: how often and by how much a trade's time is behind the newest one seen), and the bound is set from that.
+- **Out-of-orderness 2s.** Measured Nov 17 on all of Nov 13 (243k trades), per partition in offset order: p0 0.15% of trades out of order, max 7 ms behind; p1 0.53%, max 51 ms. 2s leaves about 40x margin, and costs only 2s of extra delay on a 1-minute window.
 - **Idleness 30s** is needed because partition 2 is always empty (§3). In normal hours every active partition gets several trades a second, so 30s of silence means the partition is genuinely idle.
-- **To verify on Wed:** whether PyFlink generates watermarks per Kafka partition inside the source (as Java does) when the timestamp assigner is a Python function, or only after the source. This changes how out-of-order the data looks to the watermark.
+- **Watermarks are generated after the source, not per partition.** Checked in the PyFlink 2.2.1 source (Nov 17): `from_source` passes only the Java watermark strategy and ignores a Python timestamp assigner. A Python assigner works only through `assign_timestamps_and_watermarks`, a separate operator after the source, whose parallel instances each see whatever partitions their source subtask reads, mixed together. With one source subtask reading both p0 and p1, a replay (reading history as fast as possible) can read seconds of p1 ahead of p0, and p0's trades would then be wrongly dropped as late.
+- **Fix: parallelism 3, equal to the partition count.** Each source subtask reads exactly one partition and its watermark operator (chained, same parallelism) sees only that partition, which is the same as per-partition watermarks. The window operator after `key_by` takes the minimum of the three incoming watermarks; idleness keeps the empty p2 out of that minimum. If the topic's partition count changes, parallelism must change with it.
 
 **Why:** *(This is to make sure one idle partition is not causing the watermark to pause. If the watermark pauses, no window ever fires and the job produces no output at all. Open windows would also keep piling up in state, though with incremental counts that is small)*
 
@@ -135,7 +136,7 @@ Kafka sink with **at-least-once** delivery. After a crash, windows emitted after
 
 ### 4.9 Credentials and parallelism
 
-**What:** Confluent bootstrap server and API key/secret are read from environment variables (the gitignored `.env`) and passed to the Kafka source and sink as SASL_SSL / PLAIN properties. They are never written into code or committed config. Parallelism 1 locally: about 15 trades a second needs no more. Parallelism and the extra source subtask per partition are revisited on GKE.
+**What:** Confluent bootstrap server and API key/secret are read from environment variables (the gitignored `.env`) and passed to the Kafka source and sink as SASL_SSL / PLAIN properties. They are never written into code or committed config. Parallelism 3, one per `trades.raw` partition, for watermark correctness (§4.4), not for throughput: about 15 trades a second would fit in one subtask. One subtask (reading p2) is always idle.
 
 **Why:** *(Secrets are never stored in the codebase so they dont accidentally get committed. For safety purposes they are injected at run time, just like they would be in GKE)*
 
@@ -163,7 +164,8 @@ Kafka sink with **at-least-once** delivery. After a crash, windows emitted after
 
 - **Separate Confluent service account for Flink?** The job could reuse the producer's key or get its own least-privilege account (read `trades.raw`, write `metrics.*`, its consumer group). Decide before running on GKE.
 - **Partition skew:** `trades.raw` partition 2 is empty and hot keys shift daily. Idleness handles the watermark; whether to fix the producer's partitioning is still open.
-- **Out-of-orderness bound:** set from the Nov 18 measurement, not a guess.
+- **Out-of-orderness bound:** set from the Nov 17 measurement (max 51 ms). Re-measure if the feed or symbol list changes.
+- **Replay experiment (Fri):** replay Nov 13 at parallelism 1 vs 3 and compare late counts, to show the cross-partition effect from §4.4 with real numbers.
 
 ---
 

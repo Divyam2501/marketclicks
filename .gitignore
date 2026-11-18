@@ -31,3 +31,7 @@ terraform/.terraform/
 *.tfstate
 *.tfstate.*
 terraform/tfplan
+
+# Flink: downloaded connector JARs, local checkpoints
+flink/jars/
+flink/checkpoints/

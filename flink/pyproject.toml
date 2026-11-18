@@ -1,0 +1,26 @@
+[project]
+name = "tickstore-flink"
+version = "0.1.0"
+description = "Flink jobs for tickstore (PyFlink). See docs/flink-design.md"
+# PyFlink 2.x ships wheels for Python 3.9-3.12 only (checked Nov 17, 2026).
+requires-python = "==3.12.*"
+dependencies = [
+    "apache-flink==2.2.1",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["jobs"]
+
+[tool.uv]
+# apache-beam (pulled in by PyFlink) has no macOS arm64 wheel for py3.12, so uv
+# builds it from source; its setup.py imports pkg_resources, which setuptools
+# 81+ removed. Cap setuptools for builds only.
+build-constraint-dependencies = ["setuptools<81"]
+package = false
