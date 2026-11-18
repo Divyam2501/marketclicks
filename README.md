@@ -35,6 +35,8 @@ and replay-based validation.
 | Full trading day on GKE (Nov 13, 2026) | 242,962 trades ingested, 0 pod restarts |
 | Latency, exchange trade time → producer send (1,849-trade sample at the open) | p50 21 ms, p95 45 ms, max 127 ms |
 | Flink job validated by replay | Full day replayed in ~50 s; all 3,788 per-symbol 1-minute windows match an independent count exactly |
+| Flink job live (Nov 18, 2026, 10:32–16:05 ET) | 7,067 windows, no missing minutes, 0 duplicates; windows typically land ~5 s after the minute ends |
+| Recovery from a crash mid-session | Restored from checkpoint: next 580 windows (23,656 trades) match an independent count exactly, no partial or duplicate windows |
 | Graceful shutdown in cluster | SIGTERM on deploy and node drain → queue drained, producer flushed, exit 0 |
 | Cold start from zero nodes | Node ready 69 s, pod running 97 s, streaming 115 s |
 
@@ -50,6 +52,16 @@ The point of the project is correctness under failure, not volume.
   read first. Running one source subtask per partition fixes it (0 late).
   Found by reading the PyFlink source, confirmed by experiment.
   ([flink-design §4.4, §5](docs/flink-design.md))
+- **Checkpoint restore, tested on a real failure.** The live job ran on a
+  laptop that went to sleep mid-session; the Flink runtime died and stayed
+  stuck restarting. Restoring from the last retained checkpoint brings back
+  window state and Kafka offsets from the same instant, so output resumed
+  with no gaps or duplicates. Also the case for moving Flink to GKE: a laptop
+  is not a runtime.
+- **Latency follows the data, not the clock.** A window closes when the
+  watermark passes its end, and the watermark moves only when trades arrive.
+  Windows usually land ~5 s after the minute; when the partition carrying
+  quieter symbols went silent, it took 10–12 s.
 - **Event time, not processing time.** Windows use the exchange timestamp, so
   a replay produces the same counts as the live run. Idleness handling keeps
   an always-empty partition from stalling the watermark.
@@ -73,7 +85,7 @@ The point of the project is correctness under failure, not volume.
 | WebSocket ingest, idempotent Kafka producer, reconnect, graceful shutdown | ✅ Shipped |
 | REST backfill for historical windows | ✅ Shipped |
 | Container image + GKE deployment via Terraform, scale to zero | ✅ Shipped |
-| Flink job 1: per-symbol trade counts in 1-minute event-time windows | ✅ Shipped, replay-validated |
+| Flink job 1: per-symbol trade counts in 1-minute event-time windows | ✅ Shipped, validated by replay and a full live session |
 | Per-window data-quality counts (malformed, late, extended-hours) | 🟡 In progress |
 | Flink on GKE (checkpoints in GCS, Workload Identity) | ⏳ Planned |
 | VWAP and feed-gap jobs, BigQuery sink, anomaly detectors + alerts | ⏳ Planned |
@@ -135,6 +147,8 @@ uv run python jobs/trade_count_1m.py \
   --from 2026-11-13T14:44:00+00:00 --until 2026-11-13T21:55:00+00:00 --sink print
 # Live, writing to metrics.trade_count_1m
 uv run python jobs/trade_count_1m.py --from latest --sink kafka
+# Resume after a crash from a retained checkpoint
+uv run python jobs/trade_count_1m.py --sink kafka --restore checkpoints/<job-id>/chk-<n>
 ```
 
 Deploying to GKE: [`terraform/README.md`](terraform/README.md) and

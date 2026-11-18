@@ -215,9 +215,18 @@ def build_sink() -> KafkaSink:
     return builder.build()
 
 
-def build_env(parallelism: int) -> StreamExecutionEnvironment:
+def build_env(parallelism: int, restore: str | None) -> StreamExecutionEnvironment:
     config = Configuration()
     config.set_string("execution.checkpointing.dir", CHECKPOINT_DIR.as_uri())
+    # Keep the last checkpoint when the job is cancelled or killed, so it can be
+    # restored with --restore (default deletes it on cancellation).
+    config.set_string(
+        "execution.checkpointing.externalized-checkpoint-retention", "RETAIN_ON_CANCELLATION"
+    )
+    if restore is not None:
+        # Window state and Kafka offsets both come from the checkpoint; --from is
+        # ignored for partitions the checkpoint covers (§4.7).
+        config.set_string("execution.state-recovery.path", Path(restore).resolve().as_uri())
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_parallelism(parallelism)
     env.enable_checkpointing(CHECKPOINT_INTERVAL_MS)
@@ -231,10 +240,11 @@ def main() -> None:
     parser.add_argument("--until", default=None, help="ISO time; makes the run bounded")
     parser.add_argument("--sink", choices=["print", "kafka"], default="print")
     parser.add_argument("--parallelism", type=int, default=PARALLELISM)
+    parser.add_argument("--restore", default=None, help="checkpoint dir (chk-N) to resume from")
     args = parser.parse_args()
 
     load_dotenv(FLINK_DIR.parent / ".env")
-    env = build_env(args.parallelism)
+    env = build_env(args.parallelism, args.restore)
 
     raw = env.from_source(
         build_source(args.start, args.until),
