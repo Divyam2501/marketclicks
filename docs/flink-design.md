@@ -145,7 +145,8 @@ Kafka sink with **at-least-once** delivery. After a crash, windows emitted after
 ## 5. How we know it's correct
 
 1. **Replay vs batch count:** replay one recorded day (Nov 13, before it expires ~Nov 20) through the job. Separately, count the same trades per symbol per minute with a plain Python script that reads the topic directly. The two must match for every window, apart from trades the job reports as late or malformed, which must account for the whole difference.
-   **Result (Nov 17):** Nov 13 14:44–21:55 UTC replayed at parallelism 3 in 53s. Job and independent count both 3,788 windows / 242,962 trades; **0 mismatched windows**, 0 late, 0 malformed, 0 duplicate windows. A 5-minute slice (5,306 trades) also matched the hello-world and a third count exactly.
+   **Result (Nov 17):** Nov 13 14:44–21:55 UTC replayed at parallelism 3 in 53s. Job and independent count both 3,788 windows / 242,962 trades; **0 mismatched windows**, 0 late, 0 malformed, 0 duplicate windows. A 5-minute slice (5,306 trades) also matched the hello-world and a third count exactly. The same replay with `--sink kafka` wrote 3,788 records to `metrics.trade_count_1m`; read back, they match the independent count with 0 mismatches and 0 duplicates.
+4. **Parallelism 1 vs 3 (Nov 17):** the same Nov 13 replay at parallelism 1 counted only 47,653 of 242,962 trades; **195,309 (80%) were dropped as late**, 2,648 of 3,788 windows were wrong, and the job still exited 0. Every late trade belonged to a partition-1 symbol (NVDA, GOOGL, AMZN, SPY, META, MSFT, QQQ): the single source subtask read partition 0 ahead, the watermark (generated after the source, §4.4) followed partition 0 to the end of the day, and partition 1's trades arrived behind it. At parallelism 3: 0 late. This confirms §4.4, and shows that the late side output is the only signal of this failure.
 2. **Unit tests:** parsing (valid, malformed, nanosecond timestamps) and the count/window function, without Kafka.
 3. **Live run (Thu Nov 19):** counts appear about a minute behind real time (window length + 2s bound). No windows go missing for partition 2's sake (idleness works). Watch what happens to the watermark after 16:00.
 
@@ -166,7 +167,7 @@ Kafka sink with **at-least-once** delivery. After a crash, windows emitted after
 - **Separate Confluent service account for Flink?** The job could reuse the producer's key or get its own least-privilege account (read `trades.raw`, write `metrics.*`, its consumer group). Decide before running on GKE.
 - **Partition skew:** `trades.raw` partition 2 is empty and hot keys shift daily. Idleness handles the watermark; whether to fix the producer's partitioning is still open.
 - **Out-of-orderness bound:** set from the Nov 17 measurement (max 51 ms). Re-measure if the feed or symbol list changes.
-- **Replay experiment (Fri):** replay Nov 13 at parallelism 1 vs 3 and compare late counts, to show the cross-partition effect from §4.4 with real numbers.
+- **Guarding parallelism:** a silent 80% loss is possible if parallelism ever differs from the partition count (§5 item 4). Consider failing the job at startup when they differ, and alerting on any late count during replays.
 
 ---
 
