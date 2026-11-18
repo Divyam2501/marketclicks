@@ -39,7 +39,7 @@
 |---|---|---|
 | Pod crashes | Python unhandled exception | Deployment restarts the pod on the same node; image is cached, so restart takes seconds. Process exits 1 |
 | Auth failure exit | Bad Alpaca key, or 406 connection limit, twice in a row | Queued messages are flushed, then the process exits 1. Pod crash-loops visibly; `kubectl describe pod` shows the exit code |
-| Node preemption | GCP reclaims the Spot node | WebSocket always drops. Pod is Pending until a new node is created and pulls the image (cold start, §4.9; not yet measured). Alpaca has no replay, so trades in the gap are lost; fill with `alpaca_backfill`. Overlapping backfill creates duplicates, since idempotence only covers one producer session; downstream must dedup. Queued messages are flushed only if shutdown fits the ~15s preemption window (app budget: 13s) |
+| Node preemption | GCP reclaims the Spot node | WebSocket always drops. Pod is Pending until a new node is created and pulls the image: measured cold start ~2 min (§4.9). Alpaca has no replay, so trades in the gap are lost; fill with `alpaca_backfill`. Overlapping backfill creates duplicates, since idempotence only covers one producer session; downstream must dedup. Queued messages are flushed only if shutdown fits the ~15s preemption window (app budget: 13s) |
 | Routine pod termination | Every deploy (`Recreate` stops the old pod first), `kubectl delete`, GKE node auto-upgrade / maintenance drain, scale-to-zero | Kubernetes sends SIGTERM, then SIGKILL after `terminationGracePeriodSeconds` (20s). Happens on on-demand nodes too, and far more often than preemption. The process handles SIGTERM (Python as PID 1 ignores it by default) and exits 0. **Verified Nov 12** for `rollout restart` and for the node drain during scale-down |
 | Deploy overlap | Rollout starts the new pod before the old one stops | Alpaca allows one stream connection, so the second gets error 406; prevented by the `Recreate` strategy (§4.4). Verified Nov 12: new pod subscribed 2s after the old one exited, no 406 |
 | Node scaled to zero (by design) | Outside market hours | Pod sits Pending, no ingest; no trades are lost because the market is closed. Starts automatically when a node is added (§4.9) |
@@ -70,6 +70,8 @@ Measured on the node (Nov 12): allocatable 940m CPU / 1.33 GiB memory; GKE syste
 **What:** Kubernetes Secret `alpaca-feed-env`, created directly from the local `.env` with `kubectl create secret generic --from-env-file`, so no secret file ever exists on disk or in git. It holds only the five keys the feed uses (ALPACA_API_KEY, ALPACA_API_SECRET, CONFLUENT_BOOTSTRAP_SERVERS, CONFLUENT_API_KEY, CONFLUENT_API_SECRET); the deprecated Polygon key is filtered out. Injected into the pod as environment variables (`envFrom`). `k8s/secret.yaml.example` documents the expected keys only. Rotation is delete + recreate + `kubectl rollout restart`; `kubectl apply` is not used for this Secret because it merges and never removes keys it wasn't tracking (hit Nov 12). Not using GCP Secret Manager yet.
 
 **Why:** *(For this Solo project K8 secrets is enough as it saves us the overhead of configuring google IAMs and auth loops on every POD connect. Using K8 secrets does expose the decrypted env API keys to the POD, but for a Solo developer, it is only exposed to me and it is already safe. The better way would be to do it in production pulling secret from google secret manager)*
+
+*(Identity model: the pod is the centerpiece. It connects to Alpaca over a WebSocket using the Alpaca API key, and writes to Confluent by presenting the Confluent API key in the SASL handshake, which makes it the `sa-market-clicks-process` principal there. Nothing is impersonated: a Kafka producer has no identity of its own, it is whoever its credentials say it is, which is why the keys live in a Secret and never in the image or git. Separately, the node, running as the `gke-nodes` service account with only two permissions, pulls the pod's image from Artifact Registry and ships its stdout to Cloud Logging. The pod itself never calls a Google API today; once it does (e.g. Flink checkpoints to GCS), it gets its own service account through Workload Identity instead of inheriting the node's.)*
 
 ---
 
@@ -127,7 +129,7 @@ Measured on the node (Nov 12): allocatable 940m CPU / 1.33 GiB memory; GKE syste
 
 ### 4.9 Cost: scale to zero outside market hours
 
-**What:** The node pool runs 1 node while streaming and is scaled to 0 nodes outside market hours with `gcloud container clusters resize tickstore --node-pool spot-pool --num-nodes 0|1 --zone us-east1-b`. At 0 nodes the VM and its boot disk are gone; the Deployment's pod waits in Pending and starts automatically when a node is added, with no manifest change. Remaining idle cost is the cluster management fee (believed to be covered by GKE's free-tier credit for one zonal cluster; not yet verified against the pricing page) plus small Artifact Registry and GCS storage. Scale-down took 165s (Nov 12), and the drained pod shut down gracefully (exit 0). Cold start (0 → 1 node → pod Running) is the same sequence as preemption recovery and will be measured at the next scale-up. Manual for now; later automated on a market-hours schedule.
+**What:** The node pool runs 1 node while streaming and is scaled to 0 nodes outside market hours with `gcloud container clusters resize tickstore --node-pool spot-pool --num-nodes 0|1 --zone us-east1-b`. At 0 nodes the VM and its boot disk are gone; the Deployment's pod waits in Pending and starts automatically when a node is added, with no manifest change. Remaining idle cost is the cluster management fee (believed to be covered by GKE's free-tier credit for one zonal cluster; not yet verified against the pricing page) plus small Artifact Registry and GCS storage. Scale-down took 165s (Nov 12), and the drained pod shut down gracefully (exit 0). Cold start, measured Nov 13 (same sequence as preemption recovery): node Ready 69s, image pulled (50 MB, 8.5s download) and pod Running 97s, subscribed to Alpaca 115s. The last ~18s is DNS warm-up: on a one-node cluster the cluster DNS pods start on the same fresh node at the same time, so the first connect fails with a DNS error and the second times out in the handshake; the reconnect backoff handles both (2s, then 4s) and the third attempt connects, with no pod restart. Manual for now; later automated on a market-hours schedule.
 
 **Why:** *(to be written)*
 
@@ -163,7 +165,6 @@ gcloud container clusters resize tickstore --node-pool spot-pool --num-nodes 0 -
 
 ## 6. Future work (explicitly deferred)
 
-- Measure cold start (0 → 1 node → pod Running); record it in §3 and §4.9
 - Automate scale up/down on a market-hours schedule
 - Prometheus metrics endpoint + Grafana
 - Structured JSON logging for Cloud Logging queries
