@@ -37,7 +37,7 @@ def to_epoch_ms(iso: str) -> int:
 
 def kafka_source(start_ms: int, end_ms: int) -> KafkaSource:
     jaas = (
-        f'{PLAIN_LOGIN_MODULE} required '
+        f"{PLAIN_LOGIN_MODULE} required "
         f'username="{os.environ["CONFLUENT_API_KEY"]}" '
         f'password="{os.environ["CONFLUENT_API_SECRET"]}";'
     )
