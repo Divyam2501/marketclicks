@@ -124,7 +124,7 @@ Offsets are tracked in checkpoints; committing them back to Kafka is only so the
 
 ### 4.8 Output topic and delivery guarantee
 
-**What:** New topic `metrics.trade_count_1m`, 1 partition (about 3,900 records per regular-hours day: 10 symbols × 390 minutes), 1 week retention, created once in Confluent. Record key = symbol; value is JSON:
+**What:** New topic `metrics.trade_count_1m`, 1 partition (about 3,900 records per regular-hours day: 10 symbols × 390 minutes), 1 week retention, created once in Confluent. Records have no key: PyFlink's Kafka sink passes the whole record to the key serializer, so a single field (symbol) can't be the key without custom Java. With one partition the key wouldn't affect ordering, and `(symbol, window_start)` in the value identifies a window. Value is JSON:
 
 ```json
 {"symbol": "AAPL", "window_start": "2026-11-13T14:30:00Z", "window_end": "2026-11-13T14:31:00Z", "trade_count": 412}
@@ -145,6 +145,7 @@ Kafka sink with **at-least-once** delivery. After a crash, windows emitted after
 ## 5. How we know it's correct
 
 1. **Replay vs batch count:** replay one recorded day (Nov 13, before it expires ~Nov 20) through the job. Separately, count the same trades per symbol per minute with a plain Python script that reads the topic directly. The two must match for every window, apart from trades the job reports as late or malformed, which must account for the whole difference.
+   **Result (Nov 17):** Nov 13 14:44–21:55 UTC replayed at parallelism 3 in 53s. Job and independent count both 3,788 windows / 242,962 trades; **0 mismatched windows**, 0 late, 0 malformed, 0 duplicate windows. A 5-minute slice (5,306 trades) also matched the hello-world and a third count exactly.
 2. **Unit tests:** parsing (valid, malformed, nanosecond timestamps) and the count/window function, without Kafka.
 3. **Live run (Thu Nov 19):** counts appear about a minute behind real time (window length + 2s bound). No windows go missing for partition 2's sake (idleness works). Watch what happens to the watermark after 16:00.
 
