@@ -1,102 +1,151 @@
-# tickstore — Streaming Market Data Platform
+# tickstore: streaming market data platform
 
-Real-time US equity market data ingestion into Apache Kafka with Apache Flink
-stream processing, deployed on Google Kubernetes Engine. A self-directed project
-exploring streaming system design, delivery semantics, and cloud-native
-observability.
+Real-time US equity trades streamed from a WebSocket into Apache Kafka,
+processed with Apache Flink using event time, and deployed on Google
+Kubernetes Engine with Terraform. A self-directed project focused on
+streaming correctness: delivery semantics, watermarks, graceful shutdown,
+and replay-based validation.
 
 ![CI](https://github.com/Divyam2501/marketclicks/actions/workflows/ci.yml/badge.svg)
 
 ## Architecture
 
 ```
-          Alpaca Markets WebSocket  (IEX real-time trades)
-                      │
-                      ▼  async reader coroutine
-             bounded asyncio.Queue   ← backpressure boundary
-                      │
-                      ▼  producer coroutine
-          Confluent Cloud Kafka  (topic: trades.raw, symbol-keyed, 3 partitions)
-                      │
-                      ▼
-          PyFlink stream jobs    (keyed state, event-time windows)
-                      │
-                      ▼
-          Prometheus  →  Grafana  (ingestion lag, reconnect count, produce latency)
+  Alpaca Markets WebSocket (IEX real-time trades, 10 US symbols)
+                  │
+                  ▼   alpaca_feed: async reader → bounded queue → producer
+  ┌─────────────────────────────────────────────┐
+  │ GKE Standard, one Spot node (Terraform)     │
+  │ Deployment, replicas 1, Recreate strategy   │
+  └─────────────────────────────────────────────┘
+                  │   idempotent producer, acks=all, key = symbol
+                  ▼
+  Confluent Cloud Kafka   trades.raw (3 partitions)
+                  │
+                  ▼   PyFlink job: event time, watermarks, 1-min windows
+  Confluent Cloud Kafka   metrics.trade_count_1m
+                  │
+                  ▼   (planned) BigQuery sink, anomaly detectors, alerts
 ```
 
-### Design principles
+## Measured results
 
-- **Decoupled ingest and produce.** WebSocket reader and Kafka producer run as
-  separate coroutines sharing a bounded `asyncio.Queue`. Kafka backpressure is
-  absorbed by the queue first, then propagates to the WebSocket layer only if
-  the queue fills — Polygon's slow-consumer disconnect is a last resort, not a
-  common case.
-- **Effectively-once producer semantics.** Idempotent producer config
-  (`enable.idempotence=true`, `acks=all`, `max.in.flight.requests.per.connection ≤ 5`)
-  prevents in-session duplicates on retry; Kafka's guarantee ends at Kafka, so
-  anything sinking out of Kafka would need its own dedup.
-- **Resilient reconnect.** Exponential backoff (1s → 60s cap) with ±0.5s jitter
-  for network errors; infinite retries acceptable because stream recovery is
-  the goal. Auth errors fail-fast after one retry so Kubernetes crash-loops
-  surface them visibly rather than silently retrying forever.
-- **Symbol-keyed partitioning.** Preserves per-symbol trade ordering for
-  downstream consumers. Accepts hot-key risk on dominant symbols (AAPL on IEX)
-  as a trade-off for order guarantees.
+| What | Result |
+|---|---|
+| Full trading day on GKE (Nov 13, 2026) | 242,962 trades ingested, 0 pod restarts |
+| Latency, exchange trade time → producer send (1,849-trade sample at the open) | p50 21 ms, p95 45 ms, max 127 ms |
+| Flink job validated by replay | Full day replayed in ~50 s; all 3,788 per-symbol 1-minute windows match an independent count exactly |
+| Graceful shutdown in cluster | SIGTERM on deploy and node drain → queue drained, producer flushed, exit 0 |
+| Cold start from zero nodes | Node ready 69 s, pod running 97 s, streaming 115 s |
 
-Full design rationale in [`docs/`](docs/).
+Scale is honest: 10 symbols from the IEX feed, roughly 8–23 trades per second.
+The point of the project is correctness under failure, not volume.
+
+## Engineering highlights
+
+- **A replay bug that loses 80% of the data with exit code 0.** PyFlink
+  generates watermarks after the Kafka source when the timestamp logic is
+  Python, not per partition. Replaying a day at parallelism 1 dropped
+  195,309 of 242,962 trades as "late": the watermark followed the partition
+  read first. Running one source subtask per partition fixes it (0 late).
+  Found by reading the PyFlink source, confirmed by experiment.
+  ([flink-design §4.4, §5](docs/flink-design.md))
+- **Event time, not processing time.** Windows use the exchange timestamp, so
+  a replay produces the same counts as the live run. Idleness handling keeps
+  an always-empty partition from stalling the watermark.
+- **Shutdown within GKE Spot's ~15 s preemption window.** One 13 s deadline:
+  stop reading, drain the queue (capped at 3 s), flush Kafka with the rest.
+  Python runs as PID 1 in exec form so SIGTERM actually reaches it.
+  ([deploy-design](docs/deploy-design.md))
+- **Partitioner finding.** librdkafka's default partitioner (CRC32) puts the
+  10 symbols on only 2 of 3 partitions; Java clients use murmur2 and would
+  place them differently. Documented as a cross-client hazard.
+- **Reconnect taxonomy.** Network errors retry forever with exponential
+  backoff (1 s → 60 s) and jitter; auth errors fail fast so Kubernetes
+  crash-loops surface them.
+- **Cost.** One Spot e2-small node, scaled to zero outside market hours;
+  infrastructure fully in Terraform with remote, locked state in GCS.
 
 ## Status
 
 | Component | Status |
 |---|---|
-| WebSocket ingest (Alpaca IEX, 10 US equity symbols) | ✅ Shipped |
-| Idempotent Kafka producer with symbol-keyed partitioning | ✅ Shipped |
-| Exponential-backoff reconnect + auth-vs-network error differentiation | ✅ Shipped |
-| REST backfill (historical window → Kafka) for pipeline validation | ✅ Shipped |
-| GKE deployment via Terraform | 🟡 In progress |
-| Prometheus metrics + Grafana dashboards | 🟡 In progress |
-| PyFlink stream processing (rolling trade count, 1-min VWAP, feed-gap detection) | 🟡 In progress |
+| WebSocket ingest, idempotent Kafka producer, reconnect, graceful shutdown | ✅ Shipped |
+| REST backfill for historical windows | ✅ Shipped |
+| Container image + GKE deployment via Terraform, scale to zero | ✅ Shipped |
+| Flink job 1: per-symbol trade counts in 1-minute event-time windows | ✅ Shipped, replay-validated |
+| Per-window data-quality counts (malformed, late, extended-hours) | 🟡 In progress |
+| Flink on GKE (checkpoints in GCS, Workload Identity) | ⏳ Planned |
+| VWAP and feed-gap jobs, BigQuery sink, anomaly detectors + alerts | ⏳ Planned |
+| Prometheus metrics + Grafana dashboards | ⏳ Planned |
 
 ## Design docs
 
-- [`docs/ingestion-design.md`](docs/ingestion-design.md) — Reconnect strategy,
-  backoff + jitter rationale, failure-mode taxonomy, server-side state
-  ownership argument for client-driven resubscribe.
-- [`docs/producer-design.md`](docs/producer-design.md) — Kafka producer config,
-  partitioning strategy with hot-key analysis, bounded-queue backpressure
-  design, graceful shutdown semantics.
-- [`docs/deploy-design.md`](docs/deploy-design.md) — GKE infrastructure design
-  (in progress).
+Each doc lists failure modes, then a decision with a *What* and a *Why*.
+
+- [`docs/ingestion-design.md`](docs/ingestion-design.md): reconnect strategy,
+  backoff and jitter, failure-mode taxonomy.
+- [`docs/producer-design.md`](docs/producer-design.md): idempotent producer
+  config, partitioning, bounded-queue backpressure, shutdown ordering.
+- [`docs/deploy-design.md`](docs/deploy-design.md): GKE on Spot, Terraform,
+  secrets, SIGTERM handling, identity model, scale to zero, measured cold start.
+- [`docs/flink-design.md`](docs/flink-design.md): event time, watermarks,
+  windows, late data, checkpoints, delivery guarantees, replay validation.
+
+## Repository layout
+
+```
+src/tickstore/ingest/   WebSocket feed (alpaca_feed) and REST backfill
+tests/                  ingest tests (pytest, run in CI)
+flink/                  separate uv project (Python 3.12, PyFlink 2.2.1)
+  jobs/                 trade_count_1m.py, hello_kafka.py
+  tests/                job unit tests
+terraform/              GKE cluster, Spot node pool, Artifact Registry
+k8s/                    Deployment manifest, Secret template
+Dockerfile              two-stage build: uv builds the venv, slim runtime
+docs/                   design docs
+```
 
 ## Quick start
 
-Requires Python 3.11+, [`uv`](https://docs.astral.sh/uv/), an Alpaca Markets
-paper-trading account, and a Confluent Cloud Kafka cluster.
+Requires [`uv`](https://docs.astral.sh/uv/), an Alpaca Markets paper-trading
+account (free market data), and a Confluent Cloud Kafka cluster.
 
 ```bash
-git clone https://github.com/Divyam2501/tickstore.git
-cd tickstore
-uv sync
+git clone https://github.com/Divyam2501/marketclicks.git
+cd marketclicks
+uv sync                      # ingest: Python 3.11–3.13
 
-cp .env.example .env
-# Edit .env with:
-#   ALPACA_API_KEY, ALPACA_API_SECRET
-#   CONFLUENT_BOOTSTRAP_SERVERS, CONFLUENT_API_KEY, CONFLUENT_API_SECRET
+cp .env.example .env         # Alpaca + Confluent credentials
 
-# Live ingest (during US market hours)
+# Live ingest (US market hours)
 uv run python -m tickstore.ingest.alpaca_feed
 
-# Or backfill from the last 30 minutes of historical data (works any time)
+# Or backfill the last 30 minutes (any time)
 uv run python -m tickstore.ingest.alpaca_backfill --minutes 30
 ```
 
+Flink job (needs Java 17 and the Kafka connector JAR; see
+[flink-design §4.1](docs/flink-design.md)):
+
+```bash
+cd flink && uv sync          # Python 3.12
+# Replay a past window to stdout
+uv run python jobs/trade_count_1m.py \
+  --from 2026-11-13T14:44:00+00:00 --until 2026-11-13T21:55:00+00:00 --sink print
+# Live, writing to metrics.trade_count_1m
+uv run python jobs/trade_count_1m.py --from latest --sink kafka
+```
+
+Deploying to GKE: [`terraform/README.md`](terraform/README.md) and
+[deploy-design §5](docs/deploy-design.md).
+
 ## Tech stack
 
-Python (asyncio), Apache Kafka (Confluent Cloud via `confluent-kafka-python`),
-Apache Flink (PyFlink), Google Kubernetes Engine (GKE), Terraform, Prometheus,
-Grafana. Dependency management via `uv` + `pyproject.toml`. CI via GitHub
-Actions (ruff, mypy, pytest).
+Python (asyncio), Apache Kafka (Confluent Cloud, `confluent-kafka`), Apache
+Flink (PyFlink 2.2), Docker, Kubernetes (GKE), Terraform, Google Cloud
+(Artifact Registry, Cloud Logging, GCS). `uv` for dependencies; GitHub
+Actions CI with ruff, mypy and pytest.
 
 ## License
 
