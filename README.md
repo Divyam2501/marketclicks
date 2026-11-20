@@ -1,4 +1,4 @@
-# tickstore: streaming market data platform
+# marketclicks: streaming market data platform
 
 Real-time US equity trades streamed from a WebSocket into Apache Kafka,
 processed with Apache Flink using event time, and deployed on Google
