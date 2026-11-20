@@ -8,6 +8,8 @@ and replay-based validation.
 
 ![CI](https://github.com/Divyam2501/marketclicks/actions/workflows/ci.yml/badge.svg)
 
+![tickstore architecture: Alpaca WebSocket to an ingest service on GKE, Confluent Kafka, a PyFlink event-time job and a metrics topic, with measured results](docs/images/architecture.png)
+
 ## Architecture
 
 ```
